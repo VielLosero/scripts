@@ -1,6 +1,6 @@
 #!/bin/bash
 #Begin license text.
-#Copyright 2019 Viel Losero
+#Copyleft 2019 Viel Losero
 #
 #Permission is hereby granted, free of charge, to any person obtaining a copy
 #of this software and associated documentation files (the "Software"),
