@@ -11,8 +11,11 @@
 #End license text.
 #https://opensource.org/licenses/MIT
 
-base="/home/user/mi_new_statis_website" # change this with the path of your work dir
-site="mi_blog" # change this with the name of your site directory
+# USAGE:
+# This script creates the initial minimal configuration files to start working with the local Hugo server for the creation of a static website.
+
+base="/home/user/mi_new_static_website" # change this with the path of work directory
+site="mi_blog" # change this with the name of your site 
 theme="mi_theme" # change this with the name u want for your hugo theme
 
 echo "[*] Generating basic structure with hugo templates"
