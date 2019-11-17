@@ -1,0 +1,523 @@
+#!/bin/bash
+#Copyright (c) 2019 Viel Losero
+#All rights reserved.
+#
+#Permission is hereby granted, free of charge, to any person obtaining a copy
+#of this software and associated documentation files (the "Software"),
+#to deal in the Software without restriction, including without limitation the rights to use,
+#copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, 
+#and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+#
+#The above copyright notice and this permission notice shall be included in all copies
+#or substantial portions of the Software.
+#
+#THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+#INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. 
+#IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, 
+#DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+#ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+#MIT License.
+#https://opensource.org/licenses/MIT
+
+########################################
+# Show info
+########################################
+info() {
+echo "**********************************"
+echo "This script can run as a daemon. Need root permisions to start stop daemons. Copy to /usr/sbin/resolver"
+echo "This script install a hosts.filter file in hosts to prevent malware and bad urls."
+echo "This script dont need dnsmasq, tor and stubby to run but it is recomended if u want hight dns and navigation privacy."
+echo "This script can use default resolv.conf, dnsmasq with caching, Dns though TOR, or encripted Dns over TLS with stubby to resolve domain names."
+echo "This script use the best secure option it can to resolve domain names. Configuring a list of public dns servers to use. Caching all querys to reduce bandwith and fingerprints. Using tor network to prevent wifi sniffers or local ISP logs. Use encripted DoT with stubby to prevent DnsLeaks and DnsHijacking."
+echo "For more info visit https://viellosero.github.io"
+echo "You can change config options and have detailed info inside the script."
+echo "Require: pgrep awk cat grep sort uniq date tail which. Recomended: dnsmasq tor stubby"
+echo "**********************************"
+}
+
+########################################
+# Configuration parameters 
+########################################
+PATH=/bin:/usr/bin:/sbin:/usr/sbin                                                                                                                            
+DESC="resolver daemon"
+NAME=resolver
+DAEMON=/usr/sbin/resolver
+PIDFILE=/var/run/resolverd.pid
+
+WORK_DIR=${HOME}/.resolver
+LOG_FILE=/var/www/syslog
+UPDATE_HOSTS=5 # every X days
+#HOSTS_URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling-porn-social/hosts" #tnx to https://github.com/StevenBlack
+HOSTS_URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" #tnx to https://github.com/StevenBlack
+UPDATE_CACHE=1 # every X hour
+
+########################################
+# Test if programs we need are present
+########################################
+require() {
+programs=(pgrep awk cat grep sort uniq date tail which)
+for program in "${programs[@]}"
+do
+	if command -v $program >/dev/null
+	then
+		echo "" > /dev/null	
+	else
+		echo -n "Need $program to run the script" && exit 1
+	fi
+done
+}
+
+########################################
+# List of Public DNS servers
+########################################
+#https://duckduckgo.com/?q=list+public+dns&t=h_&iax=answer&ia=answer
+public_dns=(1.1.1.1 
+	1.0.0.1 
+	198.101.242.72
+	23.253.163.53
+	205.204.88.60
+	178.21.23.150
+	91.239.100.100
+	89.233.43.71
+	209.59.210.167
+	85.214.117.11
+	212.82.225.7
+	212.82.226.212
+	8.26.56.26
+	8.20.247.20
+	84.200.69.80
+	84.200.70.40
+	104.236.210.29
+	45.55.155.25
+	216.146.35.35
+	216.146.36.36
+	80.67.169.12
+	85.214.73.63
+	87.118.111.215
+	213.187.11.62
+	37.235.1.174
+	37.235.1.177
+	80.80.80.80
+	80.80.81.81
+	87.118.100.175
+	94.75.228.29
+	85.25.251.254
+	62.141.58.13
+	8.8.8.8
+	8.8.4.4
+	81.218.119.11
+	209.88.198.133
+	74.82.42.42
+	209.244.0.3
+	209.244.0.4
+	156.154.70.1
+	156.154.71.1
+	5.45.96.220
+	185.82.22.133
+	198.153.192.1
+	198.153.194.1
+	208.67.222.222
+	208.67.220.220
+	58.6.115.42
+	58.6.115.43
+	119.31.230.42
+	200.252.98.162
+	217.79.186.148
+	81.89.98.6
+	78.159.101.37
+	203.167.220.153
+	82.229.244.191
+	216.87.84.211
+	66.244.95.20
+	207.192.69.155
+	72.14.189.120
+	194.145.226.26
+	77.220.232.44
+	9.9.9.9
+	195.46.39.39
+	195.46.39.40
+	193.58.251.251
+	208.76.50.50
+	208.76.51.51
+	78.46.89.147
+	88.198.75.145
+	64.6.64.6
+	64.6.65.6
+	77.109.148.136
+	77.109.148.137
+	77.88.8.88
+	77.88.8.2
+	109.69.8.51
+	)
+
+########################################
+# Daemon control
+########################################
+daemon_control(){
+
+	# for systemd: systemctl restart dnsmasq  :visit https://viellosero.github.io/en/posts/7-escape-from-systemd/
+	service $1 $2 2>/dev/null
+}
+
+########################################
+# Update hosts.filter
+########################################
+update_hosts() {
+# Remove old hosts.filter
+[ -f $WORK_DIR/hosts.filter* ] && rm $WORK_DIR/hosts.filter*
+# download hosts
+[ -f $WORK_DIR/hosts.filter* ] || wget $HOSTS_URL -O $WORK_DIR/hosts.filter_$(date +"%d-%m-%Y") 
+# merge hosts.filter to hosts
+cp $WORK_DIR/hosts /etc/hosts && cat $WORK_DIR/hosts.filter* >> /etc/hosts
+}
+
+########################################
+# Update dnsmasq.hosts
+########################################
+update_cache() {
+# fist update cache_reply
+cache_reply
+# restart dnsmaq
+daemon_control dnsmasq restart
+}
+
+
+########################################
+# Cache reply querys to dnsmasq.hosts  
+########################################
+cache_reply(){
+# 
+# for systemd: change "cat /var/log/syslog" to  "journalctl -xfa"
+[ -f /var/log/syslog ] &&  tail -1000000 /var/log/syslog | grep reply > $WORK_DIR/dnsmasq.reply
+cat $WORK_DIR/dnsmasq.reply | grep reply | grep -v CNAME | awk '{print $9,$7}' | sort | uniq | sed '/^[[:alpha:]]/d' >> $WORK_DIR/dnsmasq.hosts.new
+# cp dnsmasq.hosts to old
+cp $WORK_DIR/dnsmasq.hosts $WORK_DIR/dnsmasq.hosts.old 
+# merge dns-uniq.txt dnsmasq.hosts
+cat $WORK_DIR/dnsmasq.hosts.new $WORK_DIR/dnsmasq.hosts.old | sort | uniq > $WORK_DIR/dnsmasq.hosts
+}
+
+########################################
+# Dnsmasq.conf base  
+########################################
+dnsmasq_base(){
+cat <<EOF> /etc/dnsmasq.conf
+# Basic cache dnsmasq config 
+resolv-file=$WORK_DIR/resolv.dnsmasq                                                                                     
+log-queries                                                                                                                                                   
+local-service                                                                                                                                                 
+strict-order                                                                                                                                                  
+cache-size=4000                                                                                                                                               
+min-cache-ttl=3600                                                                                                                                            
+neg-ttl=3600                                                                                                                                                  
+listen-address=127.0.0.1                                                                                                                                      
+interface=lo                                                                                                                                                  
+bind-interfaces                                              
+# These prevent packets with malformed domain names and packets with private IP addresses from leaving your network.
+domain-needed                                                                                                                                                 
+bogus-priv                                                                                                                                                    
+# to read file additional host to can point to local to filter bad ip's                                                                                       
+addn-hosts=$WORK_DIR/dnsmasq.hosts
+# remember identical queries without forwarding them again.
+no-negcache
+# resolve local domain as 127.0.0.1
+address=/local/127.0.0.1
+EOF
+cat <<EOF> /etc/resolv.conf
+nameserver 127.0.0.1#53
+EOF
+}
+
+
+########################################
+# Dnsmasq.conf for tor 
+########################################
+dnsmasq_tor(){
+cat <<EOF> /etc/dnsmasq.conf
+no-resolv
+server=127.0.0.1#6053
+listen-address=127.0.0.1
+log-queries                                                                                                                                                   
+local-service                                                                                                                                                 
+strict-order                                                                                                                                                  
+cache-size=4000                                                                                                                                               
+min-cache-ttl=3600                                                                                                                                            
+interface=lo                                                                                                                                                  
+bind-interfaces                                              
+# These prevent packets with malformed domain names and packets with private IP addresses from leaving your network.
+domain-needed                                                                                                                                                 
+bogus-priv                                                                                                                                                    
+# to read file additional host to can point to local to filter bad ip's                                                                                       
+addn-hosts=$WORK_DIR/dnsmasq.hosts
+# remember identical queries without forwarding them again.
+no-negcache
+EOF
+cat <<EOF> /etc/resolv.conf
+nameserver 127.0.0.1#6053
+EOF
+}
+
+
+########################################
+# Dnsmasq.conf for stubby  
+########################################
+dnsmasq_stubby(){
+cat <<EOF> /etc/dnsmasq.conf
+no-resolv
+proxy-dnssec
+server=::1#5353
+server=127.0.0.1#5353
+listen-address=::1,127.0.0.1
+log-queries                                                                                                                                                   
+local-service                                                                                                                                                 
+strict-order                                                                                                                                                  
+cache-size=4000                                                                                                                                               
+min-cache-ttl=3600                                                                                                                                            
+interface=lo                                                                                                                                                  
+bind-interfaces                                              
+# These prevent packets with malformed domain names and packets with private IP addresses from leaving your network.
+domain-needed                                                                                                                                                 
+bogus-priv                                                                                                                                                    
+# to read file additional host to can point to local to filter bad ip's                                                                                       
+addn-hosts=$WORK_DIR/dnsmasq.hosts
+# remember identical queries without forwarding them again.
+no-negcache
+EOF
+cat <<EOF> /etc/resolv.conf
+nameserver 127.0.0.1#5353
+EOF
+}
+
+########################################
+# Tor base 
+########################################
+tor_base(){
+cat <<EOF> /etc/tor/torrc
+SocksPort 6050
+EOF
+}
+
+########################################
+# Tor DNS  
+########################################
+tor_dns(){
+cat <<EOF> /etc/tor/torrc
+SocksPort 6050
+DNSPort 6053
+EOF
+}
+
+########################################
+# Stubby base  
+########################################
+stubby_base(){
+#cat <<EOF> /etc/stubby/stubby.yml
+echo "1" >/dev/null
+# Actually stubby has a large config file with all dns, and i dont want to put it here
+# More info: https://dnsprivacy.org/wiki/display/DP/Configuring+Stubby
+# to change port edit stubby.yml
+# listen_addresses:
+#  - 127.0.0.1@5353
+#  - 0::1@5353
+#EOF
+}
+
+########################################
+# Install
+########################################
+install_files() {
+# mkdir
+[ -d $WORK_DIR ] || mkdir $WORK_DIR
+# download hosts
+[ -f $WORK_DIR/hosts.filter* ] || wget $HOSTS_URL -O $WORK_DIR/hosts.filter_$(date +"%d-%m-%Y") 
+# backup existing hosts 
+[ -f $WORK_DIR/hosts ] || cp /etc/hosts $WORK_DIR/hosts
+# merge hosts.filter to hosts
+cp $WORK_DIR/hosts /etc/hosts && cat $WORK_DIR/hosts.filter* >> /etc/hosts
+# backup resolv.conf # TIP: to prevent changes in resolv.conf chattr +i /etc/resolv.conf
+[ ! -f $WORK_DIR/resolv.conf ] && [ -f /etc/resolv.conf ] && cp /etc/resolv.conf $WORK_DIR/resolv.conf && echo "nameserver 127.0.0.1" > /etc/resolv.conf
+# backup dnsmasq.conf
+[ ! -f $WORK_DIR/dnsmasq.conf ] && [ -f /etc/dnsmasq.conf ] && cp /etc/dnsmasq.conf $WORK_DIR/dnsmasq.conf
+# backup torrc
+[ ! -f $WORK_DIR/torrc ] && [ -f /etc/tor/torrc ] && cp /etc/tor/torrc $WORK_DIR/torrc
+# backup stubby 
+[ ! -f $WORK_DIR/stubby.yml ] && [ -f /etc/stubby/stubby.yml ] && cp /etc/stubby/stubby.yml $WORK_DIR/stubby.yml
+#
+
+# config dnsmasq, tor & stubby 
+# update resolv.dnsmasq & create dnsmasq.hosts
+[ ! -z $(which dnsmasq) ] && change_dns && [ -f $WORK_DIR/dnsmasq.hosts ] || touch $WORK_DIR/dnsmasq.hosts 
+# update dnsmasq.conf & stubby.yml if tor not present
+[ ! -z $(which dnsmasq) ] && [ ! -z $(which stubby) ] && [ -z $(which tor) ] && dnsmasq_stubby && stubby_base
+# update dnsmasq.conf if tor and stubby not present
+[ ! -z $(which dnsmasq) ] && [ -z $(which tor) ] && [ -z $(which stubby) ] && dnsmasq_base
+# update dnsmasq.conf & torrc if stubby not present
+[ ! -z $(which dnsmasq) ] && [ ! -z $(which tor) ] && [ -z $(which stubby) ] && dnsmasq_tor && tor_dns
+# update dnsmasq.conf & torrc & stubby.yml if all present
+[ ! -z $(which dnsmasq) ] && [ ! -z $(which tor) ] && [ ! -z $(which stubby) ] && dnsmasq_stubby && tor_base && stubby_base
+}
+
+########################################
+# Remove
+########################################
+restore_files() {
+# restore hosts
+[ -f $WORK_DIR/hosts ] && cp $WORK_DIR/hosts /etc/hosts
+# restore dnsmasq.conf
+[ -f $WORK_DIR/dnsmasq.conf ] && cp $WORK_DIR/dnsmasq.conf /etc/dnsmasq.conf
+# restore resolv.conf
+[ -f $WORK_DIR/resolv.conf ] && cp $WORK_DIR/resolv.conf /etc/resolv.conf
+# restore torrc
+[ -f $WORK_DIR/torrc ] && cp $WORK_DIR/torrc /etc/tor/torrc
+# restore stubby
+[ -f $WORK_DIR/stubby.yml ] && cp $WORK_DIR/stubby.yml /etc/stubby/stubby.yml
+# remove working dir
+[ -d $WORK_DIR ] && rm -rf $WORK_DIR 
+}
+
+########################################
+# Start daemon  
+########################################
+start_daemon() {
+# testing requerimetns
+require
+
+# Start or Restart dnsmasq
+if ! pgrep -x "dnsmasq" > /dev/null ; then daemon_control dnsmasq restart ; fi
+# Start or Restart tor
+if ! pgrep -x "tor" > /dev/null ; then daemon_control tor restart ; fi
+# Start or Restart stubby
+if ! pgrep -x "stubby" > /dev/null ; then daemon_control stubby restart ; fi
+# Start detach
+if [ -e $PIDFILE ] 
+then 
+	echo -n "$0 already runing" && return 1
+else
+	setsid $0 detach >/dev/null 2>&1 < /dev/null &
+	echo $! > $PIDFILE
+fi
+}
+
+########################################
+# Change DNS to ofuscate querys and bypass filter dns
+########################################
+change_dns() {
+	RANDOM=$$$(date +%s)
+	dns1=${public_dns[$RANDOM % ${#public_dns[@]} ]}
+	dns2=${public_dns[$RANDOM % ${#public_dns[@]} ]}
+	dns3=${public_dns[$RANDOM % ${#public_dns[@]} ]}
+	if pgrep -x "dnsmasq" > /dev/null
+	then
+		echo -e "nameserver $dns1\nnameserver $dns2\nnameserver $dns3" > $WORK_DIR/resolv.dnsmasq && echo "resolv.dnsmasq changed!!" || exit 1
+	else
+		echo -e "nameserver $dns1\nnameserver $dns2\nnameserver $dns3" > /etc/resolv.conf && echo "resolv.conf changed!!" || exit 1
+	fi
+}
+
+########################################
+# Daemon loop 
+########################################
+daemon_loop(){
+while :;
+do
+	
+	change_dns	
+	# if dnsmasq exist and file older than $UPDATE_CACHE  update dnsmasq.hosts
+	if pgrep -x "dnsmasq" > /dev/null 
+	then 
+		if [ $(date -r $WORK_DIR/dnsmasq.hosts.old "+%d%H%M") -lt $(date -d "-$UPDATE_CACHE hour" +"%d%H%M") ]; then update_cache ;fi 
+	fi
+	# if hosts.filter older than $UPDATE_HOSTS update
+	if [ $(ls .resolver/hosts.filter* | awk -F _ '{print $2}') == $(date -d "-$UPDATE_HOSTS days" +"%d-%m-%Y") ]; then update_hosts ;fi
+
+	sleep 300 # 5 minuts
+
+done
+}
+
+########################################
+# Stop daemon
+########################################
+stop_daemon() {
+# Stop or Restart dnsmasq
+if pgrep -x "dnsmasq" > /dev/null ; then daemon_control dnsmasq stop ; fi
+# Stop or Restart tor
+if pgrep -x "tor" > /dev/null ; then daemon_control tor stop ; fi
+# Stop or Restart stubby
+if pgrep -x "stubby" > /dev/null ; then daemon_control stubby stop ; fi
+# Stop resolver
+if [ -f $PIDFILE ]
+then     
+	PID=$(cat $PIDFILE 2>/dev/null) 
+	kill -9 $PID
+       	rm -f $PIDFILE
+else
+	echo -n "$0 not runing" ; return 1
+fi
+}
+
+########################################
+# Status 
+########################################
+status_all() {
+	[ -f $PIDFILE ] && echo "[*] Resolver daemon running" || echo "[!] Resolver daemon stoped"
+	if pgrep -x "dnsmasq" > /dev/null; then echo "[*] Dnsmasq running" ;fi	
+	if pgrep -x "tor" > /dev/null; then echo "[*] Tor running" ;fi	
+	if pgrep -x "stubby" > /dev/null; then echo "[*] Stubby running" ;fi	
+	[ -f $WORK_DIR/hosts ] && echo "[*] Hosts backup done"
+	[ -f $WORK_DIR/resolv.conf ] && echo "[*] Resolv.conf backup done"
+	[ -f $WORK_DIR/dnsmasq.conf ] && echo "[*] Dnsmasq.conf backup done"
+	[ -f $WORK_DIR/hosts.filter* ] &&  echo "[*] Last download of hosts.filter $(ls $WORK_DIR/hosts.filter* | awk -F _ '{print $2}')"
+	[ -f $WORK_DIR/hosts.filter* ] &&  echo "[*] Lines in hosts $(cat /etc/hosts | wc -l)"
+	[ -f $WORK_DIR/dnsmasq.hosts ] &&  echo "[*] Cached entries on dnsmasq.hosts $(cat $WORK_DIR/dnsmasq.hosts | wc -l)"
+	#tail -1000 /var/log/syslog | grep servidor | tail -2
+}
+
+########################################
+# Case options to run script 
+########################################
+
+case "$1" in
+info)	info
+        ;;
+start)  echo "Starting $NAME "
+        start_daemon $PIDFILE
+        [ $? -eq 0 ] && echo "done" || echo " failed: $?"
+        ;;
+stop)   echo "Stopping $NAME "
+        stop_daemon $PIDFILE
+	res=$?
+        [ $res -eq 0 ] && echo "done" || echo " failed: $res"
+        ;;
+restart) echo "Restarting $NAME " 
+        $0 stop
+        $0 start
+        ;;
+install) echo "Installing configuration files for $NAME "
+        install_files
+        [ $? -eq 0 ] && echo "done" || echo " failed: $?"
+        ;;
+remove) echo -n "Removing configuration files of $NAME "
+        restore_files
+        [ $? -eq 0 ] && echo "done" || echo " failed: $?"
+        ;;
+status) echo "Status of $NAME "
+        status_all && exit 0 || exit $?
+        ;;
+update) case "$2" in	
+	hosts) update_hosts ;; 
+	cache) update_cache ;;
+	dns) change_dns ;;
+	*) echo "Usage: $0 {update hosts|update cache|update dns}" ;;
+	esac
+	;;
+detach)
+       	daemon_loop && exit 0 || exit $?
+        ;;
+*)      echo "Usage: $0 {info|install|start|stop|status|update|restart|remove}"
+        exit 2
+        ;;
+esac
+exit 0
+
