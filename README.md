@@ -12,4 +12,4 @@ SHA256: b03271aaff71890ac85940d02faedb8798ad058312cd1ec6fc1362e4edcc72c3  hugo-S
 
 ## resolver
 
-SHA256: f996cfd52468e9798914250ed0a6c6f04ae38e667232ac57a8b3f2e7b7041e95  resolver/resolver
+SHA256: a4bc38e58bea87f18f1e0091ee0bc3929dbcb47a1ed99b27fa91a47cc07379b2  resolver/resolver

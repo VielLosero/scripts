@@ -304,7 +304,8 @@ EOF
 tor_dns(){
 cat <<EOF> /etc/tor/torrc
 SocksPort 6050
-DNSPort 6053
+#DNSPort 6053
+TransPort 9040
 EOF
 }
 
